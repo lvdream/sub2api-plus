@@ -491,6 +491,7 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 	if account.IsOAuth() && s.identityService != nil {
 		fp, err := s.identityService.GetOrCreateFingerprint(ctx, account.ID, clientHeaders)
 		if err == nil {
+			s.applyPersistentClaudeCodeDevice(ctx, account, fp)
 			ctFingerprint = fp
 			if !ctEnableMPT {
 				accountUUID := account.GetExtraString("account_uuid")

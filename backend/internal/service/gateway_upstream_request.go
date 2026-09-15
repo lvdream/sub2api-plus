@@ -67,6 +67,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 			logger.LegacyPrintf("service.gateway", "Warning: failed to get fingerprint for account %d: %v", account.ID, err)
 			// 失败时降级为透传原始headers
 		} else {
+			s.applyPersistentClaudeCodeDevice(ctx, account, fp)
 			if enableFP {
 				fingerprint = fp
 			}

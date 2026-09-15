@@ -32,6 +32,15 @@ Built-in declarations reuse existing pins in `internal/pkg/claude`,
 `internal/service/openai_codex_identity.go`. This feature does not upgrade
 those pins. The settings page displays the exact current effective identity.
 
+## Claude Code account identity
+
+Anthropic OAuth and setup-token accounts keep a private, account-owned Claude
+Code device identity and fallback session. The gateway uses it only when it
+must generate outbound `metadata.user_id`; a valid client-provided Claude Code
+session remains the routing and correlation input. `request_id` is always
+request-scoped and is never reused as account identity. These private values
+are not returned by account APIs or written to request logs.
+
 The exact compiled Antigravity identity is
 `antigravity/2.9.1 windows/amd64`, with identifier `antigravity` and client
 version `2.9.1` encoded in the UA. Only `setUserSettings` and `fetchUserInfo`

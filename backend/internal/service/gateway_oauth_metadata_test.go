@@ -3,11 +3,21 @@
 package service
 
 import (
+	"context"
 	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+type persistentClaudeCodeIdentityAccountRepo struct {
+	AccountRepository
+	identity *ClaudeCodeAccountIdentity
+}
+
+func (r persistentClaudeCodeIdentityAccountRepo) GetOrCreateClaudeCodeIdentity(_ context.Context, _ int64) (*ClaudeCodeAccountIdentity, error) {
+	return r.identity, nil
+}
 
 func TestBuildOAuthMetadataUserID_FallbackWithoutAccountUUID(t *testing.T) {
 	svc := &GatewayService{}
@@ -26,7 +36,7 @@ func TestBuildOAuthMetadataUserID_FallbackWithoutAccountUUID(t *testing.T) {
 
 	fp := &Fingerprint{ClientID: "deadbeef"} // should be used as user id in legacy format
 
-	got := svc.buildOAuthMetadataUserID(parsed, account, fp)
+	got := svc.buildOAuthMetadataUserID(context.Background(), parsed, account, fp)
 	require.NotEmpty(t, got)
 
 	// Legacy format: user_{client}_account__session_{uuid}
@@ -53,7 +63,7 @@ func TestBuildOAuthMetadataUserID_UsesAccountUUIDWhenPresent(t *testing.T) {
 		},
 	}
 
-	got := svc.buildOAuthMetadataUserID(parsed, account, nil)
+	got := svc.buildOAuthMetadataUserID(context.Background(), parsed, account, nil)
 	require.NotEmpty(t, got)
 
 	// New format: user_{client}_account_{account_uuid}_session_{uuid}
@@ -89,9 +99,9 @@ func TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns(t *testing.T) {
 		`{"role":"assistant","content":"answer 2"},` +
 		`{"role":"user","content":"third question"}]}`)
 
-	id1 := svc.buildOAuthMetadataUserID(round1, account, fp)
-	id2 := svc.buildOAuthMetadataUserID(round2, account, fp)
-	id3 := svc.buildOAuthMetadataUserID(round3, account, fp)
+	id1 := svc.buildOAuthMetadataUserID(context.Background(), round1, account, fp)
+	id2 := svc.buildOAuthMetadataUserID(context.Background(), round2, account, fp)
+	id3 := svc.buildOAuthMetadataUserID(context.Background(), round3, account, fp)
 
 	require.NotEmpty(t, id1)
 	require.Equal(t, id1, id2, "session_id 应随对话增长保持不变")
@@ -100,6 +110,42 @@ func TestBuildOAuthMetadataUserID_SessionIDStableAcrossTurns(t *testing.T) {
 	// 不同的首条 user 消息应派生出不同的 session_id（不同会话）。
 	other := mustParse(`{"model":"claude-sonnet-4-5","system":"sys","messages":[` +
 		`{"role":"user","content":"a completely different opener"}]}`)
-	idOther := svc.buildOAuthMetadataUserID(other, account, fp)
+	idOther := svc.buildOAuthMetadataUserID(context.Background(), other, account, fp)
 	require.NotEqual(t, id1, idOther, "不同首条消息应派生不同 session_id")
+}
+
+func TestBuildOAuthMetadataUserID_UsesPersistentAccountIdentityForGeneratedMetadata(t *testing.T) {
+	identity := &ClaudeCodeAccountIdentity{
+		DeviceID:         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		DefaultSessionID: "0f6c807e-51f8-49fd-8a2a-1873b0c5d985",
+	}
+	svc := &GatewayService{accountRepo: persistentClaudeCodeIdentityAccountRepo{identity: identity}}
+	account := &Account{ID: 888, Platform: PlatformAnthropic, Type: AccountTypeOAuth, Extra: map[string]any{"account_uuid": "acc-uuid"}}
+	fp := &Fingerprint{ClientID: identity.DeviceID, UserAgent: "claude-cli/2.1.161 (external, cli)"}
+
+	first := &ParsedRequest{Model: "claude-sonnet-4-5", Body: NewRequestBodyRef([]byte(`{"messages":[{"role":"user","content":"one"}]}`))}
+	second := &ParsedRequest{Model: "claude-sonnet-4-5", Body: NewRequestBodyRef([]byte(`{"messages":[{"role":"user","content":"two"}]}`))}
+
+	firstID := svc.buildOAuthMetadataUserID(context.Background(), first, account, fp)
+	secondID := svc.buildOAuthMetadataUserID(context.Background(), second, account, fp)
+	firstParsed := ParseMetadataUserID(firstID)
+	secondParsed := ParseMetadataUserID(secondID)
+	require.NotNil(t, firstParsed)
+	require.NotNil(t, secondParsed)
+	require.Equal(t, identity.DeviceID, firstParsed.DeviceID)
+	require.Equal(t, identity.DefaultSessionID, firstParsed.SessionID)
+	require.Equal(t, firstID, secondID)
+}
+
+func TestApplyPersistentClaudeCodeDevice_OnlyChangesEligibleAccounts(t *testing.T) {
+	identity := &ClaudeCodeAccountIdentity{DeviceID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	svc := &GatewayService{accountRepo: persistentClaudeCodeIdentityAccountRepo{identity: identity}}
+
+	oauthFingerprint := &Fingerprint{ClientID: "transient"}
+	svc.applyPersistentClaudeCodeDevice(context.Background(), &Account{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeOAuth}, oauthFingerprint)
+	require.Equal(t, identity.DeviceID, oauthFingerprint.ClientID)
+
+	apiKeyFingerprint := &Fingerprint{ClientID: "transient"}
+	svc.applyPersistentClaudeCodeDevice(context.Background(), &Account{ID: 2, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}, apiKeyFingerprint)
+	require.Equal(t, "transient", apiKeyFingerprint.ClientID)
 }
