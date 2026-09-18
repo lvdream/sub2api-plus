@@ -47,6 +47,16 @@ is unavailable, requests continue with the cached device and the next request
 retries persistence. Other account types keep the cache-only device ID.
 Metadata passthrough still forwards client metadata unchanged.
 
+Administrators may set an account device in the account editor, stored as
+`credentials.claude_user_id`. Selection is: a valid account device → the
+persisted device → a newly generated and persisted device. The management API
+lowercases the value and rejects anything other than 64 hexadecimal characters
+with `CLAUDE_DEVICE_ID_INVALID`; a blank value clears it (bulk updates store an
+explicit null). The account device applies to outbound requests only: the
+persisted device and Redis fingerprint are unchanged, so clearing the setting
+restores the previous device. `extra.claude_user_id` and `anthropic_user_id`
+are not device sources.
+
 Sessions are unchanged: a client session is rewritten per account, and a
 gateway-generated session derives from the conversation. The device ID is not
 returned by account APIs, and its persistence logs record only the account ID.

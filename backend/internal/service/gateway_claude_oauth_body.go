@@ -327,7 +327,7 @@ func (s *GatewayService) buildOAuthMetadataUserID(parsed *ParsedRequest, account
 		return ""
 	}
 
-	userID := strings.TrimSpace(account.GetClaudeUserID())
+	userID := account.ClaudeCodeDeviceOverride()
 	if userID == "" && fp != nil {
 		userID = fp.ClientID
 	}
@@ -452,7 +452,7 @@ func (s *GatewayService) buildOAuthMetadataUserIDFromBody(
 		return ""
 	}
 
-	userID := strings.TrimSpace(account.GetClaudeUserID())
+	userID := account.ClaudeCodeDeviceOverride()
 	if userID == "" && fp != nil {
 		userID = fp.ClientID
 	}

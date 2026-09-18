@@ -95,12 +95,16 @@ func (s *IdentityService) GetOrCreateFingerprint(ctx context.Context, account *A
 		fp.UpdatedAt = cached.UpdatedAt
 	}
 	fp.ClientID = s.accountDeviceID(ctx, account, fp.ClientID)
-	if cached != nil && *fp == *cached && time.Since(time.Unix(fp.UpdatedAt, 0)) <= 24*time.Hour {
-		return fp, nil
+	if cached == nil || *fp != *cached || time.Since(time.Unix(fp.UpdatedAt, 0)) > 24*time.Hour {
+		fp.UpdatedAt = time.Now().Unix()
+		if err := s.cache.SetFingerprint(ctx, account.ID, fp); err != nil {
+			logger.LegacyPrintf("service.identity", "Failed to persist account device identity: account_id=%d", account.ID)
+		}
 	}
-	fp.UpdatedAt = time.Now().Unix()
-	if err := s.cache.SetFingerprint(ctx, account.ID, fp); err != nil {
-		logger.LegacyPrintf("service.identity", "Failed to persist account device identity: account_id=%d", account.ID)
+	// A configured device applies to outbound requests only. The cache and store
+	// keep the persisted device, so clearing the override restores it.
+	if override := account.ClaudeCodeDeviceOverride(); override != "" {
+		fp.ClientID = override
 	}
 	return fp, nil
 }

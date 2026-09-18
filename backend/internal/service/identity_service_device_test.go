@@ -145,9 +145,44 @@ func TestGetOrCreateFingerprintPersistsOnlyAnthropicOAuthAndSetupToken(t *testin
 	}
 }
 
-func TestClaudeCodeOutboundPathsUsePersistedDevice(t *testing.T) {
+func TestGetOrCreateFingerprintAppliesDeviceOverrideWithoutPersistingIt(t *testing.T) {
+	cache := &stubIdentityCache{}
+	store := &stubClaudeCodeDeviceStore{stored: map[int64]string{7: storedClaudeCodeDeviceID}}
+	svc := NewIdentityService(cache, store)
+	account := anthropicOAuthDeviceAccount()
+	account.Credentials = map[string]any{"claude_user_id": overrideClaudeCodeDeviceID}
+
+	fp, err := svc.GetOrCreateFingerprint(context.Background(), account, nil)
+	require.NoError(t, err)
+	require.Equal(t, overrideClaudeCodeDeviceID, fp.ClientID)
+	require.Equal(t, storedClaudeCodeDeviceID, cache.lastSet.ClientID, "the cache keeps the persisted device")
+	require.Equal(t, storedClaudeCodeDeviceID, store.stored[7])
+
+	account.Credentials = map[string]any{}
+	fp, err = svc.GetOrCreateFingerprint(context.Background(), account, nil)
+	require.NoError(t, err)
+	require.Equal(t, storedClaudeCodeDeviceID, fp.ClientID, "clearing the override restores the persisted device")
+}
+
+func TestClaudeCodeOutboundPathsUseResolvedDevice(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		credentials map[string]any
+		want        string
+	}{
+		{name: "persisted", want: storedClaudeCodeDeviceID},
+		{name: "account_override", credentials: map[string]any{"claude_user_id": overrideClaudeCodeDeviceID}, want: overrideClaudeCodeDeviceID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertClaudeCodeOutboundPathsUseDevice(t, tc.credentials, tc.want)
+		})
+	}
+}
+
+func assertClaudeCodeOutboundPathsUseDevice(t *testing.T, credentials map[string]any, want string) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
-	account := &Account{ID: 7, Platform: PlatformAnthropic, Type: AccountTypeOAuth, Extra: map[string]any{
+	account := &Account{ID: 7, Platform: PlatformAnthropic, Type: AccountTypeOAuth, Credentials: credentials, Extra: map[string]any{
 		"account_uuid": "7d0c7a52-9a8b-4c1e-8f4b-1c2d3e4f5a6b",
 	}}
 	clientUserID := FormatMetadataUserID(cachedClaudeCodeDeviceID, "", "7578cf37-aaca-46e4-a45c-71285d9dbb83", "2.1.78")
@@ -174,14 +209,14 @@ func TestClaudeCodeOutboundPathsUsePersistedDevice(t *testing.T) {
 	_, wireBody, err := newService().buildUpstreamRequest(context.Background(), newContext(), account,
 		withMetadata, "test-token", "oauth", "claude-haiku-4-5", false, false)
 	require.NoError(t, err)
-	require.Equal(t, storedClaudeCodeDeviceID, deviceOf(t, wireBody), "messages")
+	require.Equal(t, want, deviceOf(t, wireBody), "messages")
 
 	_, wireBody, err = newService().buildCountTokensRequest(context.Background(), newContext(), account,
 		withMetadata, "test-token", "oauth", "claude-haiku-4-5", false)
 	require.NoError(t, err)
-	require.Equal(t, storedClaudeCodeDeviceID, deviceOf(t, wireBody), "count_tokens")
+	require.Equal(t, want, deviceOf(t, wireBody), "count_tokens")
 
 	out := newService().applyClaudeCodeOAuthMimicryToBody(context.Background(), newContext(), account,
 		withoutMetadata, "instructions", "claude-haiku-4-5")
-	require.Equal(t, storedClaudeCodeDeviceID, deviceOf(t, out), "chat-completions and responses mimicry")
+	require.Equal(t, want, deviceOf(t, out), "chat-completions and responses mimicry")
 }
