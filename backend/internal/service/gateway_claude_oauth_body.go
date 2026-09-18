@@ -320,7 +320,7 @@ func normalizeClaudeOAuthRequestBody(body []byte, modelID string, opts claudeOAu
 	return out, modelID
 }
 
-func (s *GatewayService) buildOAuthMetadataUserID(ctx context.Context, parsed *ParsedRequest, account *Account, fp *Fingerprint) string {
+func (s *GatewayService) buildOAuthMetadataUserID(parsed *ParsedRequest, account *Account, fp *Fingerprint) string {
 	if parsed == nil || account == nil {
 		return ""
 	}
@@ -338,20 +338,15 @@ func (s *GatewayService) buildOAuthMetadataUserID(ctx context.Context, parsed *P
 		userID = generateClientID()
 	}
 
-	// Use the account-owned default only when gateway generates metadata. A
-	// client-provided Claude Code session remains the routing input elsewhere.
-	sessionID := ""
-	if identity := s.persistentClaudeCodeIdentity(ctx, account); identity != nil {
-		sessionID = identity.DefaultSessionID
+	// session_id 用"会话级稳定种子"派生（账号 + 客户端区分因子 + 首条 user 文本）：
+	// 随对话在尾部追加 messages 时保持不变，贴近真实 CC 进程级稳定的 session_id。
+	// 不复用 GenerateSessionHash —— 后者是粘性路由键、按设计逐轮变化（见其测试）。
+	var firstUserText string
+	if parsed.Body != nil {
+		firstUserText = extractFirstUserText(parsed.Body.Bytes())
 	}
-	if sessionID == "" {
-		var firstUserText string
-		if parsed.Body != nil {
-			firstUserText = extractFirstUserText(parsed.Body.Bytes())
-		}
-		seed := buildStableSessionSeed(account.ID, sessionContextDiscriminator(parsed.SessionContext), firstUserText)
-		sessionID = generateSessionUUID(seed)
-	}
+	seed := buildStableSessionSeed(account.ID, sessionContextDiscriminator(parsed.SessionContext), firstUserText)
+	sessionID := generateSessionUUID(seed)
 
 	// 根据指纹 UA 版本选择输出格式
 	var uaVersion string
@@ -404,8 +399,7 @@ func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
 	normalizeOpts := claudeOAuthNormalizeOptions{stripSystemCacheControl: !systemRewritten}
 
 	if s.identityService != nil && c != nil && c.Request != nil {
-		if fp, err := s.identityService.GetOrCreateFingerprint(ctx, account.ID, c.Request.Header); err == nil && fp != nil {
-			s.applyPersistentClaudeCodeDevice(ctx, account, fp)
+		if fp, err := s.identityService.GetOrCreateFingerprint(ctx, account, c.Request.Header); err == nil && fp != nil {
 			mimicMPT := false
 			if s.settingService != nil {
 				_, mimicMPT, _ = s.settingService.GetGatewayForwardingSettings(ctx)
@@ -453,6 +447,7 @@ func (s *GatewayService) buildOAuthMetadataUserIDFromBody(
 	fp *Fingerprint,
 	body []byte,
 ) string {
+	_ = ctx
 	if account == nil {
 		return ""
 	}
@@ -468,18 +463,14 @@ func (s *GatewayService) buildOAuthMetadataUserIDFromBody(
 		userID = generateClientID()
 	}
 
-	sessionID := ""
-	if identity := s.persistentClaudeCodeIdentity(ctx, account); identity != nil {
-		sessionID = identity.DefaultSessionID
+	// 与 buildOAuthMetadataUserID 一致：用会话级稳定种子，避免整 body 哈希导致
+	// 每轮（甚至每个 token 变化）都重算出不同的 session_id。
+	var clientDiscriminator string
+	if fp != nil {
+		clientDiscriminator = fp.ClientID
 	}
-	if sessionID == "" {
-		var clientDiscriminator string
-		if fp != nil {
-			clientDiscriminator = fp.ClientID
-		}
-		seed := buildStableSessionSeed(account.ID, clientDiscriminator, extractFirstUserText(body))
-		sessionID = generateSessionUUID(seed)
-	}
+	seed := buildStableSessionSeed(account.ID, clientDiscriminator, extractFirstUserText(body))
+	sessionID := generateSessionUUID(seed)
 
 	var uaVersion string
 	if fp != nil {

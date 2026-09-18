@@ -1,3 +1,5 @@
+//go:build unit || !integration
+
 package migrations
 
 import (
@@ -12,6 +14,6 @@ func TestClaudeCodeAccountIdentitiesMigration(t *testing.T) {
 	migration := string(content)
 	require.Contains(t, migration, "CREATE TABLE IF NOT EXISTS claude_code_account_identities")
 	require.Contains(t, migration, "account_id BIGINT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE")
-	require.Contains(t, migration, "device_id CHAR(64) NOT NULL")
-	require.Contains(t, migration, "default_session_id UUID NOT NULL")
+	require.Contains(t, migration, "device_id TEXT NOT NULL CHECK (device_id ~ '^[0-9a-f]{64}$')")
+	require.NotContains(t, migration, "session")
 }

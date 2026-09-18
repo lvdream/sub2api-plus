@@ -32,14 +32,24 @@ Built-in declarations reuse existing pins in `internal/pkg/claude`,
 `internal/service/openai_codex_identity.go`. This feature does not upgrade
 those pins. The settings page displays the exact current effective identity.
 
-## Claude Code account identity
+## Claude Code account device
 
-Anthropic OAuth and setup-token accounts keep a private, account-owned Claude
-Code device identity and fallback session. The gateway uses it only when it
-must generate outbound `metadata.user_id`; a valid client-provided Claude Code
-session remains the routing and correlation input. `request_id` is always
-request-scoped and is never reused as account identity. These private values
-are not returned by account APIs or written to request logs.
+Each Anthropic OAuth or setup-token account keeps one private Claude Code
+device ID (64 lowercase hexadecimal characters) in
+`claude_code_account_identities`. It is the device part of every generated or
+rewritten outbound `metadata.user_id` on Claude paths, including messages,
+token counting and the Chat Completions/Responses adapters, so Redis eviction
+and restarts do not rotate it. The first stored value adopts the valid device
+already cached in Redis, so an upgrade does not change active accounts;
+otherwise a random ID is generated. Each process reads the database once per
+account and the Redis fingerprint caches the stored value. While the database
+is unavailable, requests continue with the cached device and the next request
+retries persistence. Other account types keep the cache-only device ID.
+Metadata passthrough still forwards client metadata unchanged.
+
+Sessions are unchanged: a client session is rewritten per account, and a
+gateway-generated session derives from the conversation. The device ID is not
+returned by account APIs, and its persistence logs record only the account ID.
 
 The exact compiled Antigravity identity is
 `antigravity/2.9.1 windows/amd64`, with identifier `antigravity` and client
